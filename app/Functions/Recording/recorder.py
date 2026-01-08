@@ -10,20 +10,6 @@ from ...logs.settings import logger
 # Load the environment variables
 load_dotenv()
 
-
-class Color(Enum):
-    """
-    Define basic color schemes
-    """
-    SUCCESS = "\033[1m\033[32m"
-    ERROR = "\033[1m\033[31m"
-    WARNING = "\033[1m\033[33m"
-    INFO = "\033[1m\033[35m"
-    DEFAULT = "\033[0m"
-
-    def __str__(self):
-        return self.value
-
 class VoiceRecorder(object):
     """
     Record audio for cloning
@@ -49,7 +35,7 @@ class VoiceRecorder(object):
         """
         Record input audio data
         """
-        logger.info(f"{Color.SUCCESS}Recording started ...{Color.DEFAULT}")
+        logger.info("Recording started ...")
         try:
             while True:
                 # Capture the audio data in manageable chunks
@@ -58,14 +44,14 @@ class VoiceRecorder(object):
 
         except KeyboardInterrupt:
             # Ctrl + F2
-            logger.warning(f"{Color.WARNING}Encountered a keyboard interrupt. Stopping recording ...{Color.DEFAULT}")
+            logger.warning("Encountered a keyboard interrupt. Stopping recording ...")
         
         except Exception as e:
-            logger.exception(f"{Color.ERROR}Exception - {str(e)}{Color.DEFAULT}")
+            logger.exception(f"Exception - {str(e)}")
 
         # Save the file
         self.save_audio()
-        logger.info(f"{Color.SUCCESS} Successfully saved the audio file as \"{self.output_file}\"!{Color.DEFAULT}")
+        logger.info(f"Successfully saved the audio file as \"{self.output_file}\"!")
 
         # Perform Cleanup
         self.perform_cleanup()
