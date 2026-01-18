@@ -1,12 +1,10 @@
 import os
 import torch
-import nltk
 import numpy as np
 import sounddevice as sd
 from TTS.api import TTS
 from dotenv import load_dotenv
 
-nltk.download('punkt')
 load_dotenv(dotenv_path="orian-development/app/.env")
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -14,7 +12,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 class Text_To_Speech:
     def __init__(self):
         self.sample_rate = eval(os.getenv('SAMPLE_RATE', 22050))
-        self.chunk_ms = eval(os.getenv('CHUNK_MS', 40))
+        self.chunk_ms = eval(os.getenv('CHUNK_MS', 60))
         self.samples_per_chunk = self.sample_rate * self.chunk_ms // 1000
         self.tts_model = os.getenv('TTS_MODEL', "tts_models/en/ljspeech/tacotron2-DDC")
         self.audio_prompt_path = os.getenv('SAMPLE_AUDIO_PATH', None)
@@ -22,12 +20,16 @@ class Text_To_Speech:
             model_name=self.tts_model,
             progress_bar=False,
         ).to(device)
+
+        # Streaming
+        self.stream = sd.OutputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype="float32",
+            blocksize=self.samples_per_chunk
+        )
+        self.stream.start() # Start the stream
     
-    def split_sentences(self, text: str):
-        """
-        NLTK based sentence splitter
-        """
-        return nltk.sent_tokenize(text)
     
     def chunk_audio(self, audio: np.ndarray):
         """
@@ -48,20 +50,12 @@ class Text_To_Speech:
         audio = self.model.tts(text = sentence, language = "en", speaker_wav=self.audio_prompt_path)
         return np.asarray(audio, dtype=np.float32)
 
-    def speak(self, text: str):
+    def speak(self, sentence: str):
+        # Generate audio for the sentence
+        audio = self.generate_audio(sentence)
+        for chunk in self.chunk_audio(audio):
+            self.stream.write(chunk.reshape(-1, 1))
 
-        # Split the text to sentences
-        sentences = self.split_sentences(text)
-
-        with sd.OutputStream(
-            samplerate=self.sample_rate,
-            channels=1,
-            dtype="float32",
-            blocksize=self.samples_per_chunk
-        ) as stream:
-            for sentence in sentences:
-                # Generate audio for each sentence
-                audio = self.generate_audio(sentence)
-
-                for chunk in self.chunk_audio(audio):
-                    stream.write(chunk.reshape(-1, 1))
+    def close(self):
+        self.stream.stop()
+        self.stream.close()
