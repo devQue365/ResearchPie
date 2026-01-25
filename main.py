@@ -1,3 +1,4 @@
+import time
 import sys
 import nltk
 import threading
@@ -16,6 +17,7 @@ def tts_worker(tts: Text_To_Speech):
         if sentence is None:
             break
         tts.speak(sentence)
+        # time.sleep(tts.pause_for_sentence(sentence))
         tts_queue.task_done()
 
 def main():
