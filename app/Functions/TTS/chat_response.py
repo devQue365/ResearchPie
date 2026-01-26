@@ -1,16 +1,18 @@
 """
 Generates response to user's tokens
 """
-import ollama
+import asyncio
+from ollama import AsyncClient
 import os
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path="orian-development/app/.env")
 class ResponseAI:
-    def __init__(self, stream: bool = False):
+    def __init__(self, stream: bool = True):
         self.model = os.getenv('RESPONSE_MODEL')
+        self.client = AsyncClient()
         # Hold local conversation for now
-        self.conversation = [
+        self.conversation_history = [
             {
                 "role": "system", 
                 "content": '''
@@ -30,15 +32,22 @@ class ResponseAI:
         ]
         self.stream = stream
     
-    def reply(self, message: str):
+    async def generate_response(self, message: str):
         """
         Reply to user's message
         """
-
         # Manage context size - future implementation
         message_token = {"role": "user", "content": message}
-        self.conversation.append(message_token)
-        response: ollama.ChatResponse = ollama.chat(model = self.model, messages = self.conversation, stream=self.stream)
+        self.conversation_history.append(message_token)
+        response: AsyncClient.chat = await self.client.chat(
+            model = self.model,
+            messages=self.conversation_history,
+            stream=True
+        )
         
-        for chunk in response:
-            yield chunk.message.content
+        async for chunk in response:
+            content = chunk.get('message', {}).get('content', '')
+            if content:
+                print(content, flush = True, end = '')
+                yield content
+            await asyncio.sleep(0.05)
