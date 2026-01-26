@@ -1,71 +1,47 @@
 import time
-import sys
-import nltk
-import threading
-import queue
-from app.Functions.TTS.tts import Text_To_Speech
+import asyncio
+from app.Functions.TTS.tts import OveroTTS
 from app.Functions.TTS.chat_response import ResponseAI
+from torch.cuda import empty_cache
 
-nltk.download("punkt", quiet=True)
+# Empty CUDA Cache
+empty_cache()
 
-tts_queue = queue.Queue()
+class ChatOrchestrator:
+    def __init__(self):
+        # Producers and Consumers
+        self.tts_system = OveroTTS()
+        self.response_system = ResponseAI()
 
-def tts_worker(tts: Text_To_Speech):
-    while True:
-        sentence = tts_queue.get()
+    async def start_session(self):
+        # Start background tasks once
+        consumer_task = asyncio.create_task(
+            self.tts_system.audio_consumer()
+        )
 
-        if sentence is None:
-            break
-        tts.speak(sentence)
-        # time.sleep(tts.pause_for_sentence(sentence))
-        tts_queue.task_done()
+        tts_producer_task = asyncio.create_task(
+            self.tts_system.audio_producer()
+        )
 
-def main():
-
-    # TTS background thread
-    tts = Text_To_Speech()
-    worker = threading.Thread(
-        target = tts_worker,
-        args = (tts, ),
-        daemon = True
-    )
-    worker.start()
-
-    response_system = ResponseAI(True)
-
-    try:
+        # Run indefinte sessiom
         while True:
-            user_input = input(">> ").strip()
-            if user_input.lower() in ('exit', 'quit'):
+            print('-+' * 50)
+            prompt_o = await asyncio.to_thread(input, "Ask Anything : ")
+            print('-+' * 50)
+            if prompt_o.lower() in {'exit', 'quit', 'stop'}:
                 break
-
-            print("Sarah : ", end = '', flush = True)
-            response_buffer = ""
-
-            for token in response_system.reply(user_input):
-                sys.stdout.write(token)
-                sys.stdout.flush()
-
-                # Accumulate text in buffer
-                response_buffer += token
-
-                # Detect sentence
-                sentences = nltk.sent_tokenize(response_buffer)
-
-                if(len(sentences) > 1):
-                    for sentence in sentences[:-1]:
-                        tts_queue.put(sentence)
-                    
-                    response_buffer = sentences[-1]
-            # Speak the remaining text
-            if response_buffer.strip():
-                tts_queue.put(response_buffer)
             
+            response_stream = self.response_system.generate_response(
+                message = prompt_o
+            )
+            await self.tts_system.process_request(response_stream)
             print()
-    finally:
-        tts_queue.put(None)
-        worker.join()
-        tts.close()
+        
+        # Clean shutdown
+        self.tts_system.shutdown()
+
+        await asyncio.gather(tts_producer_task, consumer_task)
 
 if __name__ == '__main__':
-    main()
+    orchestrator = ChatOrchestrator()
+    asyncio.run((orchestrator.start_session()))
