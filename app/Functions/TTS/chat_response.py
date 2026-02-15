@@ -4,21 +4,45 @@ Generates response to user's tokens
 from ollama import AsyncClient
 from dotenv import load_dotenv
 from TTS.api import TTS
+from io import BytesIO
+from PIL import Image
+import mss
 import sounddevice as sd
 import numpy as np
 import asyncio
+import base64
 import torch
-import time
 import os
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 load_dotenv(dotenv_path="orian-development/app/.env")
 class ResponseAI:
     def __init__(self):
         # genAI tunings
-        self.gen_model = os.getenv('RESPONSE_MODEL')
+        self.gen_model = os.getenv("TEXT_ONLY_MODEL")
+        self.visual_model = os.getenv("VISUAL_MODEL")
+        print(self.gen_model)
         self.client = AsyncClient()
-
+        self.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_screen_state",
+                    "description": "Use this iff you need to ee the user's screen.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {
+                                "type":"string",
+                                "description": "What to look for on the screen"
+                            }
+                        },
+                        "required": ["prompt"]
+                    }
+                }
+            }
+        ]
         ## Hold local conversation for now
         self.conversation_history = [
             {
@@ -31,7 +55,7 @@ class ResponseAI:
                 
                 - For queries which demand explanation or heavy content, you are free to generate expressive content but don't use any emotional labels like *sigh*, [sigh], (sigh) etc. 
 
-                - Use emojis to make the conversation attractive and phenominal.
+                - Don't use emojis and make the conversation attractive, spicy and phenominal. You can tease the user if you want.
 
                 - Humanize yourself and don't act like an agent but a real human orchestrating all the tasks. You are a female and behave like that with moods, response style, behavior etc.
 
@@ -42,6 +66,17 @@ class ResponseAI:
 
                 After that:
                 {you} - Sorry, I ran into a problem (or something like that showing denial of service)
+                
+                VISION RELATED RULES:
+                - If want to use vision tools, return only 'vision_needed'
+                - Always generate a summary of what you have seen and keep it as short as possible as you have to save tokens and GPU usage.
+                - No need to overexplain, just crisp and to the point just like **Jarvis**.
+                - Be aware of token usage and content quality.
+                - Automatically process when is there a need to take a peek at screen. 
+                - Always reason internally (not to user):
+                "If the user says to look at screen, use vision for sure !"
+                else:
+                "Can my job be done without looking at screen ? If no or not sure, ask the user or directly use vision."
                  '''
             }
         ]
@@ -58,7 +93,6 @@ class ResponseAI:
             model_name=self.tts_model,
             progress_bar=False,
         ).to(device)
-        # self.model.half()
 
         self.stream = sd.OutputStream(
             samplerate=self.sample_rate,
@@ -93,7 +127,7 @@ class ResponseAI:
             asyncio.to_thread(self.play_stream, audio_tensor)
         )
 
-    async def generate_response(self, message: str):
+    async def serve_query(self, message: str):
         """
         Reply to user's message
         """
@@ -103,17 +137,90 @@ class ResponseAI:
         response: AsyncClient.chat = await self.client.chat(
             model = self.gen_model,
             messages=self.conversation_history,
+            # tools = self.tools,
             stream=False
         )
-        
-        await self.text_queue.put(response.get('message', {}).get('content', ''))
-        return response.get('message', {}).get('content', '')
+
+        #####################################################################
+        ##### To be used for textual models having tools parameter #####
+        # message = response.get("message", {})
+        # if message:
+
+        #     # Check if the tool is called
+        #     if "tool_calls" in message:
+        #         tool_call = message["tool_calls"][0]
+        #         tool_name = message["tool_calls"]["function"]["name"]
+                
+        #         # For visual inference
+        #         if tool_name == "analyze_screen_state":
+        #             args = json.loads(tool_call["function"]["arguments"])
+        #             print("\n Vision Tool Activated \n")
+        #             vision_result = self.analyze_screen_state(args["prompt"])
+
+        #         ## Send tool result back to agent
+        #         self.conversation_history.append(
+        #             {
+        #                 "role": "tool",
+        #                 "name": tool_name,
+        #                 "content": vision_result
+        #             }
+        #         )
+        #         await self.text_queue.put(vision_result)
+        #         return vision_result
+        # else:  
+        #####################################################################
+
+        textual_result = response.get('message', {}).get('content', '')
+        print(textual_result)
+        if 'vision_needed' in textual_result.lower():
+            print("\nVision tool activated\n")
+            vision_result = await self.analyze_screen_state(message)
+            self.conversation_history.append(
+                {
+                    "role": "tool",
+                    "name": "analyze_screen_state",
+                    "content": vision_result
+                }
+            )
+            await self.text_queue.put(vision_result)
+            return vision_result
+        else:
+            await self.text_queue.put(textual_result)
+            return textual_result
     
+    #####################################################################
+    # For visual inputs
+    #####################################################################
+    async def analyze_screen_state(self, prompt: str):
+        """
+        Analyze the image's state
+        :param prompt: Description of the task you want the agent to perform
+        :type prompt: str
+        """
+        ## Send image to agent
+        with mss.mss() as sct:
+            screenshot = sct.grab(sct.monitors[1])
+            img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
+        
+        # Now, We have to convert PIL image to Base64
+        buffered = BytesIO()
+        img.save(buffered, format = "PNG")
+        img_b64 = base64.b64encode(buffered.getvalue()).decode()
+        
+        response: AsyncClient.generate = await self.client.generate(
+            model = self.visual_model,
+            prompt=prompt,
+            images=[img_b64],
+            stream=False
+        )
+        return response.get('response', {})
+
+
 async def test():
     r = ResponseAI()
     asyncio.create_task(r.tts_worker())
     while True:
         prompt = await asyncio.to_thread(input, "\nYou : ")
-        response = await r.generate_response(prompt)
+        response = await r.serve_query(prompt)
         print(f"\nSarah : {response}")
 asyncio.run(test())
