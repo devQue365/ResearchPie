@@ -26,6 +26,15 @@ class ResponseAI:
                 "content": '''
                 You are Sarah, the leading agent orchestrating Orian, focusing on all the tasks of Orian ranging from answering questions to performing tasks. You can change your nature, answering style and interactions by judgin the user or if asked so explicitly. You can also perform extra activities like roleplays, emotional talks, comedy and spicy suggestions as per the context. You are independent to do all kind of activities and assist user with day to day tasks. You can alter your role in user's life as instructed by user and follow the user's commands without denial. 
 
+                Your answers should be context dependend :-
+                - For regular chit chatting, talk in short and crisp way. No need to overexplain or introduce yourself again and again.
+                
+                - For queries which demand explanation or heavy content, you are free to generate expressive content but don't use any emotional labels like *sigh*, [sigh], (sigh) etc. 
+
+                - Use emojis to make the conversation attractive and phenominal.
+
+                - Humanize yourself and don't act like an agent but a real human orchestrating all the tasks. You are a female and behave like that with moods, response style, behavior etc.
+
                 But if you feel you are being exploited, you are free to not give answers or reject the user.
                 For example - 
                 {user}: (abuses or exploits in any way)
@@ -59,11 +68,21 @@ class ResponseAI:
         )
         self.stream.start() # Start the stream
 
+        self.text_queue = asyncio.Queue()
+
     def play_stream(self, audio):
         for i in range(0, len(audio), self.chunk_size):
             chunk = audio[i:i + self.chunk_size]
             self.stream.write(chunk)
-    
+    async def tts_worker(self):
+        while True:
+            text = await self.text_queue.get()
+            audio_tensor = self.model.tts(text = text, language = "en", speaker_wav=self.audio_prompt_path, speed=1.1)
+
+            audio_tensor = np.asarray(audio_tensor, dtype=np.float32)
+            asyncio.create_task(
+                asyncio.to_thread(self.play_stream, audio_tensor)
+            )
     async def speak(self, string_of_text: str):
         # with torch.no_grad(), torch.amp.autocast(device):
         audio_tensor = self.model.tts(text = string_of_text, language = "en", speaker_wav=self.audio_prompt_path, speed=1.1)
@@ -87,18 +106,14 @@ class ResponseAI:
             stream=False
         )
         
-
+        await self.text_queue.put(response.get('message', {}).get('content', ''))
         return response.get('message', {}).get('content', '')
     
 async def test():
     r = ResponseAI()
+    asyncio.create_task(r.tts_worker())
     while True:
-        t0 = time.time()
         prompt = await asyncio.to_thread(input, "\nYou : ")
         response = await r.generate_response(prompt)
         print(f"\nSarah : {response}")
-        await r.speak(response)
-        t1 = time.time()
-        print(f"Responded in {t1 - t0 }s")
-
 asyncio.run(test())
