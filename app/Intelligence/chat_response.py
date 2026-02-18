@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from TTS.api import TTS
 from io import BytesIO
 from PIL import Image
+from pathlib import Path
 import mss
 import sounddevice as sd
 import numpy as np
@@ -13,6 +14,8 @@ import asyncio
 import base64
 import torch
 import os
+import shutil
+import subprocess
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -22,7 +25,7 @@ class ResponseAI:
         # genAI tunings
         self.gen_model = os.getenv("TEXT_ONLY_MODEL")
         self.visual_model = os.getenv("VISUAL_MODEL")
-        print(self.gen_model)
+        self.script_path = Path(os.getenv("SCRIPT_PATH")).resolve()
         self.client = AsyncClient()
         self.tools = [
             {
@@ -53,6 +56,12 @@ class ResponseAI:
                 Your answers should be context dependend :-
                 - For regular chit chatting, talk in short and crisp way. No need to overexplain or introduce yourself again and again.
                 
+                - For the responses which require executing tasks, "Generate a Python script that performs the task - just give the code, so it can be run, "
+                "no smalltalk! - no backticks either ok, just code in form of dictionary"
+                Example:
+                {user}: schedule a reminder for me (or tasks like that which require execution of code)
+                {you}: {"tool": "code", "code": "python code goes here"} {return type: dict}
+
                 - For queries which demand explanation or heavy content, you are free to generate expressive content but don't use any emotional labels like *sigh*, [sigh], (sigh) etc. 
 
                 - Don't use emojis and make the conversation attractive, spicy and phenominal. You can tease the user if you want.
@@ -89,11 +98,6 @@ class ResponseAI:
         # TTS model configs
         self.tts_model = os.getenv('TTS_MODEL', "tts_models/en/ljspeech/tacotron2-DDC")
         self.audio_prompt_path = os.getenv('SAMPLE_AUDIO_PATH', "PATH_TO_YOUR_AUDIO_FILE")
-        self.model = TTS(
-            model_name=self.tts_model,
-            progress_bar=False,
-        ).to(device)
-
         self.stream = sd.OutputStream(
             samplerate=self.sample_rate,
             channels=1,
@@ -101,8 +105,19 @@ class ResponseAI:
             blocksize=self.chunk_size
         )
         self.stream.start() # Start the stream
-
         self.text_queue = asyncio.Queue()
+   
+    def load(self):
+        """
+        Loads the intelligence
+        """
+        self.model = TTS(
+            model_name=self.tts_model,
+            progress_bar=False,
+        ).to(device)
+
+        
+
 
     def play_stream(self, audio):
         for i in range(0, len(audio), self.chunk_size):
@@ -140,6 +155,22 @@ class ResponseAI:
             # tools = self.tools,
             stream=False
         )
+        output = response.get('message', {}).get('content', '')
+        if isinstance(output, dict):
+            script = output.get("code", "print('Some error occured ...')")
+            
+            with open(self.script_path, 'w') as file:
+                file.write(script)
+            python_command = shutil.which("python") or shutil.which("python3")
+            if not python_command:
+                raise RuntimeError("Execution environment not found")
+
+            process = subprocess.run([python_command, str(self.script_path)], capture_output=True, text=True)
+
+            if process.returncode != 0:
+                return f"Error running Python script: {process.stderr}"
+            else:
+                return f"Python script output: {process.stdout}"
 
         #####################################################################
         ##### To be used for textual models having tools parameter #####
@@ -171,7 +202,7 @@ class ResponseAI:
         #####################################################################
 
         textual_result = response.get('message', {}).get('content', '')
-        print(textual_result)
+        # print(textual_result)
         if 'vision_needed' in textual_result.lower():
             print("\nVision tool activated\n")
             vision_result = await self.analyze_screen_state(message)
@@ -211,16 +242,18 @@ class ResponseAI:
             model = self.visual_model,
             prompt=prompt,
             images=[img_b64],
-            stream=False
+            stream=False,
+            # enable_thinking = False,
+            options={'num_predict': 300}
         )
         return response.get('response', {})
 
 
-async def test():
-    r = ResponseAI()
-    asyncio.create_task(r.tts_worker())
-    while True:
-        prompt = await asyncio.to_thread(input, "\nYou : ")
-        response = await r.serve_query(prompt)
-        print(f"\nSarah : {response}")
-asyncio.run(test())
+# async def test():
+#     r = ResponseAI()
+#     asyncio.create_task(r.tts_worker())
+#     while True:
+#         prompt = await asyncio.to_thread(input, "\nYou : ")
+#         response = await r.serve_query(prompt)
+#         print(f"\nSarah : {response}")
+# asyncio.run(test())
