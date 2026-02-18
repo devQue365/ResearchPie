@@ -1,47 +1,119 @@
 import time
+import random
+import threading
 import asyncio
-from app.Functions.TTS.tts import OveroTTS
-from app.Functions.TTS.chat_response import ResponseAI
 from torch.cuda import empty_cache
+from rich.live import Live
+from rich.layout import Layout
+from rich.panel import Panel
+from rich.spinner import Spinner
+from rich.console import Console
+
+from app.Intelligence.chat_response import ResponseAI
 
 # Empty CUDA Cache
 empty_cache()
 
-class ChatOrchestrator:
+# Initialize Console
+console = Console()
+
+
+def make_layout():
+    """Defines the terminal layout."""
+    layout = Layout()
+    # Split the screen into a fixed 'header' and a 'body' for jokes
+    layout.split_column(
+        Layout(name="header", size=3),
+        Layout(name="body", size=5)
+    )
+    return layout 
+
+class Session(object):
     def __init__(self):
-        # Producers and Consumers
-        self.tts_system = OveroTTS()
-        self.response_system = ResponseAI()
+        self.layout = None
+        self.message_cache = []
+        self.jokes_cache = []
+        self.env_loaded = False
+        self.has_replied = False
+        self.layout = make_layout()
+        self.intel = ResponseAI()
+        self.initialize_session()       
 
-    async def start_session(self):
-        # Start background tasks once
-        consumer_task = asyncio.create_task(
-            self.tts_system.audio_consumer()
-        )
+    def initialize_session(self):
+        """
+        Initialize Orian Session
+        """
 
-        tts_producer_task = asyncio.create_task(
-            self.tts_system.audio_producer()
-        )
+        def load_environment():
+            """
+            Load the model's work environment
+            """
+            self.intel.load()
+            self.env_loaded = True
 
-        # Run indefinte sessiom
-        while True:
-            print('-+' * 50)
-            prompt_o = await asyncio.to_thread(input, "Ask Anything : ")
-            print('-+' * 50)
-            if prompt_o.lower() in {'exit', 'quit', 'stop'}:
-                break
-            
-            response_stream = self.response_system.generate_response(
-                message = prompt_o
-            )
-            await self.tts_system.process_request(response_stream)
-            print()
         
-        # Clean shutdown
-        self.tts_system.shutdown()
 
-        await asyncio.gather(tts_producer_task, consumer_task)
+        # Use threads to do the background work
+        thread = threading.Thread(target=load_environment)
+        thread.start()
 
-if __name__ == '__main__':
-    orchestrator = ChatOrchestrator()
-    asyncio.run((orchestrator.start_session()))
+        # Load the messages
+        with open("orian-development/message_logs.txt", 'r') as fh:
+            self.message_cache = fh.readlines()
+            random.shuffle(self.message_cache)
+
+        # Load jokes
+        with open("orian-development/jokes.txt", 'r') as fh:
+            self.jokes_cache = fh.readlines()
+            random.shuffle(self.jokes_cache)
+        
+        # Set up the welcome message
+        welcome_message = Panel(
+            Spinner("balloon", text=f"[bold cyan]{self.message_cache[random.randint(0, 100)]}[/]", style="bold green"),
+            border_style="blue",
+        )
+
+        self.layout["header"].update(welcome_message)
+
+        # Start the live display
+        with Live(self.layout, refresh_per_second=4, screen=False, transient=True):
+            i = 0
+            while not self.env_loaded:
+                # Update only the body section
+                self.layout["body"].update(
+                    Panel(
+                        Spinner("flip", f"[bold yellow]{self.jokes_cache[i]}[/]", style="bold yellow"), 
+                        title="[bold]Knock Knock ?[/]", 
+                        border_style="magenta",
+                        padding=(1, 2)
+                    )
+                )
+                
+                # Wait before switching to the next joke
+                time.sleep(10)
+                i += 1
+
+            self.layout["header"].update(
+                Panel("Orian is online")
+            )
+        thread.join()
+        asyncio.create_task(self.intel.tts_worker())
+
+        
+async def main():
+    """
+    The main CLI based chat interface
+    """
+
+    # Initialize Session
+    session = Session()
+
+    # Initialize TTS worker
+    asyncio.create_task(session.intel.tts_worker())
+
+    while True:
+        prompt = await asyncio.to_thread(input, "\nYou : ")
+        response = await session.intel.serve_query(prompt)
+        console.print(response)
+
+asyncio.run(main())
