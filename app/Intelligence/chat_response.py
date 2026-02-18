@@ -58,6 +58,7 @@ class ResponseAI:
                 
                 - For the responses which require executing tasks, "Generate a Python script that performs the task - just give the code, so it can be run, "
                 "no smalltalk! - no backticks either ok, just code in form of dictionary"
+                **If yu think the package won't be present in system, Simply install required packages from within the python script you write**
                 Example:
                 {user}: schedule a reminder for me (or tasks like that which require execution of code)
                 {you}: {"tool": "code", "code": "python code goes here"} {return type: dict}
@@ -146,6 +147,13 @@ class ResponseAI:
         """
         Reply to user's message
         """
+        import ast
+        def is_string_a_dict(s: str):
+            try:
+                evaluated_content = ast.literal_eval(s)
+                return isinstance(evaluated_content, dict)
+            except(ValueError, SyntaxError):
+                return False
         # Manage context size - future implementation
         message_token = {"role": "user", "content": message}
         self.conversation_history.append(message_token)
@@ -156,8 +164,9 @@ class ResponseAI:
             stream=False
         )
         output = response.get('message', {}).get('content', '')
-        if isinstance(output, dict):
-            script = output.get("code", "print('Some error occured ...')")
+        if is_string_a_dict(output):
+            evaluated_dict = ast.literal_eval(output)
+            script = evaluated_dict.get("code", "print('Some error occured ...')")
             
             with open(self.script_path, 'w') as file:
                 file.write(script)
