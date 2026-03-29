@@ -69,7 +69,7 @@ console_handler.setFormatter(Color_Formatter(
 ))
 
 ''' File Handler '''
-file_handler = logging.FileHandler("app/logs/main.log")
+file_handler = logging.FileHandler("./main.log")
 file_handler.setFormatter(
     logging.Formatter(
         "[%(name)s] - %(asctime)s - %(module)s - %(funcName)s - %(lineno)d - %(message)s", datefmt = "%d/%m/%Y %I:%M:%S %p"
