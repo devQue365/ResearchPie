@@ -1,0 +1,13 @@
+pyaudio
+dotenv
+coqui-tts
+chatterbox-tts
+sounddevice
+torch
+torchcodec
+ollama
+scipy
+pillow
+mss # ulta fast, cross-platform module for taking screenshots using ```ctypes```
+rich
+flask
