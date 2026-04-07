@@ -1,0 +1,14 @@
+FROM python:3.10
+
+WORKDIR /app
+
+COPY . .
+
+RUN pip install --upgrade pip
+
+RUN pip install streamlit pdfplumber PyPDF2 ollama \
+langchain langchain-community langchain-core \
+langchain-text-splitters langchain-ollama \
+faiss-cpu python-dotenv
+
+CMD ["streamlit", "run", "main.py", "--server.port=8501", "--server.address=0.0.0.0"]
